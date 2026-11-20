@@ -2,7 +2,9 @@ package com.lmctl.lm3d.demo;
 
 import com.lmctl.lm3d.camera.PerspectiveCamera;
 import com.lmctl.lm3d.controls.OrbitControls;
+import com.lmctl.lm3d.core.Group;
 import com.lmctl.lm3d.core.Mesh;
+import com.lmctl.lm3d.core.Object3D;
 import com.lmctl.lm3d.core.Scene;
 import com.lmctl.lm3d.geometry.BoxGeometry;
 import com.lmctl.lm3d.geometry.PlaneGeometry;
@@ -11,6 +13,7 @@ import com.lmctl.lm3d.geometry.TorusGeometry;
 import com.lmctl.lm3d.light.AmbientLight;
 import com.lmctl.lm3d.light.DirectionalLight;
 import com.lmctl.lm3d.light.PointLight;
+import com.lmctl.lm3d.loader.GltfLoader;
 import com.lmctl.lm3d.material.MeshBasicMaterial;
 import com.lmctl.lm3d.material.MeshPhongMaterial;
 import com.lmctl.lm3d.renderer.WebGLRenderer;
@@ -34,9 +37,14 @@ public final class Lm3dDemo {
     private static PerspectiveCamera camera;
     private static WebGLRenderer renderer;
     private static OrbitControls controls;
+    private static final GltfLoader gltfLoader = new GltfLoader();
+    private static Group modelRoot;
+    private static Object3D importedRoot;
     private static Mesh hero;
     private static Mesh satellite;
     private static PointLight satelliteLight;
+    private static String modelStats = "24 hero vertices";
+    private static int loadGeneration;
     private static boolean paused;
     private static double previousTimestamp;
     private static double elapsed;
@@ -76,7 +84,10 @@ public final class Lm3dDemo {
         hero = new Mesh(new BoxGeometry(2.1f, 2.1f, 2.1f), heroMaterial);
         hero.name = "Hero mesh";
         hero.position.set(0, 1.25f, 0);
-        scene.add(hero);
+        modelRoot = new Group();
+        modelRoot.name = "Demo model";
+        modelRoot.add(hero);
+        scene.add(modelRoot);
 
         MeshPhongMaterial groundMaterial = new MeshPhongMaterial("#1b304a");
         groundMaterial.specular.set("#24344a");
@@ -110,17 +121,26 @@ public final class Lm3dDemo {
 
     private static void changeGeometry() {
         String geometry = geometrySelect.getValue();
+        if (geometry.startsWith("gltf-")) {
+            loadGltf(geometry);
+            return;
+        }
+        loadGeneration++;
+        showPrimitive();
         String label = switch (geometry) {
             case "sphere" -> {
                 hero.setGeometry(new SphereGeometry(1.35f, 32, 24));
+                modelStats = "825 hero vertices";
                 yield "Sphere";
             }
             case "torus" -> {
                 hero.setGeometry(new TorusGeometry(1.15f, 0.42f, 48, 24));
+                modelStats = "1225 hero vertices";
                 yield "Torus";
             }
             default -> {
                 hero.setGeometry(new BoxGeometry(2.1f, 2.1f, 2.1f));
+                modelStats = "24 hero vertices";
                 yield "Box";
             }
         };
@@ -128,6 +148,61 @@ public final class Lm3dDemo {
         updateStats();
         status.setInnerText("Ready: " + label
                 + " geometry. The mesh was replaced through the Java scene graph.");
+    }
+
+    private static void loadGltf(String geometry) {
+        int generation = ++loadGeneration;
+        String file;
+        String label;
+        switch (geometry) {
+            case "gltf-hierarchy" -> {
+                file = "models/hierarchy.gltf";
+                label = "external-buffer hierarchy";
+            }
+            case "gltf-torus" -> {
+                file = "models/torus-interleaved.gltf";
+                label = "interleaved torus";
+            }
+            default -> {
+                file = "models/cube-embedded.gltf";
+                label = "embedded cube";
+            }
+        }
+        geometrySelect.setDisabled(true);
+        status.setInnerText("Loading glTF " + label + "…");
+        gltfLoader.load(file, model -> {
+            if (generation != loadGeneration) {
+                return;
+            }
+            if (importedRoot != null) {
+                modelRoot.remove(importedRoot);
+            }
+            modelRoot.remove(hero);
+            importedRoot = model.root();
+            modelRoot.add(importedRoot);
+            modelStats = model.meshCount() + " glTF meshes · " + model.vertexCount() + " vertices";
+            geometrySelect.setDisabled(false);
+            renderer.render(scene, camera);
+            updateStats();
+            status.setInnerText("Ready: glTF " + label + ". Loaded by Java from " + file + ".");
+        }, error -> {
+            if (generation != loadGeneration) {
+                return;
+            }
+            geometrySelect.setDisabled(false);
+            status.setInnerText(error + ". The previous scene is still visible.");
+        });
+    }
+
+    private static void showPrimitive() {
+        if (importedRoot != null) {
+            modelRoot.remove(importedRoot);
+            importedRoot = null;
+        }
+        if (!modelRoot.children().contains(hero)) {
+            modelRoot.add(hero);
+        }
+        geometrySelect.setDisabled(false);
     }
 
     private static void toggleAnimation() {
@@ -142,7 +217,7 @@ public final class Lm3dDemo {
 
     private static void resetScene() {
         controls.reset();
-        hero.rotation.set(0, 0, 0);
+        modelRoot.rotation.set(0, 0, 0);
         elapsed = 0;
         previousTimestamp = 0;
         updateSatellite();
@@ -156,8 +231,8 @@ public final class Lm3dDemo {
             if (previousTimestamp > 0) {
                 double delta = Math.min(0.05, (timestamp - previousTimestamp) / 1000);
                 elapsed += delta;
-                hero.rotation.y += (float) delta * 0.55f;
-                hero.rotation.x = (float) Math.sin(elapsed * 0.45) * 0.18f;
+                modelRoot.rotation.y += (float) delta * 0.55f;
+                modelRoot.rotation.x = (float) Math.sin(elapsed * 0.45) * 0.18f;
                 updateSatellite();
             }
             previousTimestamp = timestamp;
@@ -175,7 +250,8 @@ public final class Lm3dDemo {
     }
 
     private static void updateStats() {
-        stats.setInnerText(hero.geometry().vertexCount() + " hero vertices · "
-                + renderer.triangles() + " triangles · " + renderer.drawCalls() + " draw calls");
+        stats.setInnerText(modelStats + " · " + renderer.triangles() + " triangles · "
+                + renderer.drawCalls() + " draw calls");
+        document.getElementById("scene-mesh-count").setInnerText(renderer.drawCalls() + " meshes");
     }
 }

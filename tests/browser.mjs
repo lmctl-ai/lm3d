@@ -7,7 +7,7 @@ import { chromium } from 'playwright';
 
 const repository = fileURLToPath(new URL('../', import.meta.url));
 const root = path.join(repository, 'target/demo');
-const types = { '.css': 'text/css', '.html': 'text/html', '.js': 'text/javascript', '.svg': 'image/svg+xml' };
+const types = { '.css': 'text/css', '.html': 'text/html', '.js': 'text/javascript', '.svg': 'image/svg+xml', '.gltf': 'model/gltf+json', '.bin': 'application/octet-stream' };
 const server = http.createServer((request, response) => {
   const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
   const file = path.resolve(root, '.' + (pathname === '/' ? '/demo.html' : pathname));
@@ -64,7 +64,7 @@ async function pixels() {
 
 await page.goto(base);
 await page.waitForFunction(() => document.querySelector('#status')?.textContent.startsWith('Ready: Box'));
-assert.equal(await page.locator('#geometry option').count(), 3);
+assert.equal(await page.locator('#geometry option').count(), 6);
 assert.match(await page.locator('#render-stats').innerText(), /24 hero vertices · 454 triangles · 3 draw calls/);
 assert.deepEqual(await page.locator('script[src]').evaluateAll(scripts => scripts.map(script => script.getAttribute('src'))), ['teavm.js', 'boot.js']);
 
@@ -97,6 +97,32 @@ assert.match(await page.locator('#render-stats').innerText(), /1225 hero vertice
 const torus = await frame();
 assert.notEqual(torus, sphere, 'torus geometry changes rendered pixels');
 await page.screenshot({ path: path.join(repository, 'target/lm3d-torus-demo.png'), fullPage: true });
+
+await page.locator('#geometry').selectOption('gltf-cube');
+await page.waitForFunction(() => document.querySelector('#status')?.textContent.startsWith('Ready: glTF embedded cube'));
+assert.match(await page.locator('#render-stats').innerText(), /1 glTF meshes · 24 vertices · 454 triangles · 3 draw calls/);
+const gltfCube = await frame();
+assert.notEqual(gltfCube, torus, 'embedded glTF buffer renders a different scene');
+assert.ok(requests.some(url => url.endsWith('/models/cube-embedded.gltf')));
+
+await page.locator('#geometry').selectOption('gltf-hierarchy');
+await page.waitForFunction(() => document.querySelector('#status')?.textContent.startsWith('Ready: glTF external-buffer hierarchy'));
+assert.match(await page.locator('#render-stats').innerText(), /2 glTF meshes · 48 vertices · 466 triangles · 4 draw calls/);
+assert.equal(await page.locator('#scene-mesh-count').innerText(), '4 meshes');
+const gltfHierarchy = await frame();
+assert.notEqual(gltfHierarchy, gltfCube, 'external glTF hierarchy renders two transformed meshes');
+assert.ok(requests.some(url => url.endsWith('/models/hierarchy.gltf')));
+assert.ok(requests.some(url => url.endsWith('/models/hierarchy.bin')));
+await page.screenshot({ path: path.join(repository, 'target/lm3d-gltf-hierarchy.png'), fullPage: true });
+
+await page.locator('#geometry').selectOption('gltf-torus');
+await page.waitForFunction(() => document.querySelector('#status')?.textContent.startsWith('Ready: glTF interleaved torus'));
+assert.match(await page.locator('#render-stats').innerText(), /1 glTF meshes · 561 vertices · 1466 triangles · 3 draw calls/);
+const gltfTorus = await frame();
+assert.notEqual(gltfTorus, gltfHierarchy, 'interleaved glTF accessors render the torus');
+assert.ok(requests.some(url => url.endsWith('/models/torus-interleaved.gltf')));
+assert.ok(requests.some(url => url.endsWith('/models/torus.bin')));
+assert.equal((await pixels()).error, 0);
 
 await page.locator('#geometry').selectOption('box');
 await page.waitForFunction(() => document.querySelector('#status')?.textContent.startsWith('Ready: Box'));
@@ -134,8 +160,20 @@ await page.screenshot({ path: path.join(repository, 'target/lm3d-mobile-demo.png
 await page.setViewportSize({ width: 1440, height: 1100 });
 await page.screenshot({ path: path.join(repository, 'target/lm3d-demo.png'), fullPage: true });
 
+const callbackPage = await browser.newPage();
+const callbackErrors = [];
+callbackPage.on('pageerror', error => callbackErrors.push(error.message));
+await callbackPage.goto(base);
+await callbackPage.waitForFunction(() => document.querySelector('#status')?.textContent.startsWith('Ready: Box'));
+await callbackPage.locator('#scene-mesh-count').evaluate(element => element.remove());
+await callbackPage.locator('#geometry').selectOption('gltf-cube');
+await callbackPage.waitForTimeout(750);
+assert.equal(callbackErrors.length, 1, 'glTF success-callback exceptions propagate to the browser');
+assert.equal(await callbackPage.locator('#geometry').isDisabled(), false, 'callback failure does not leave the selector disabled');
+await callbackPage.close();
+
 assert.deepEqual(errors, []);
 assert.ok(requests.every(url => url.startsWith(new URL(base).origin)), 'demo loads no third-party runtime resources');
-console.log(JSON.stringify({ geometries: ['Box', 'Sphere', 'Torus'], webgl, animation: 'frames, pause, Space verified', controls: 'pointer drag, wheel, reset verified', mobile: 'no horizontal overflow', scripts: ['teavm.js', 'boot.js'], errors }, null, 2));
+console.log(JSON.stringify({ geometries: ['Box', 'Sphere', 'Torus'], gltf: ['embedded cube', 'external-buffer hierarchy', 'interleaved torus with default scene/material'], callbackExceptions: 'propagated', webgl, animation: 'frames, pause, Space verified', controls: 'pointer drag, wheel, reset verified', mobile: 'no horizontal overflow', scripts: ['teavm.js', 'boot.js'], errors }, null, 2));
 await browser.close();
 server.close();
