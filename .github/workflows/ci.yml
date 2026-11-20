@@ -19,6 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          path: lm3d
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: lmctl-ai/lmcode-java
+          ref: b88d3401ee10210a0a6583991d6a81427d5f112a
+          path: lmcode-java
           persist-credentials: false
       - uses: graalvm/setup-graalvm@27b360dbb857524eaf0b4c4cef364d38e5b4f173
         with:
@@ -28,11 +35,18 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.15
+      - name: Install the published LMCode compiler
+        run: |
+          npm install --prefix "$RUNNER_TEMP/lm3d-compiler" @lmctl-ai/lmctl@0.2.482
+          echo "LMCODE_COMPILER_MODULE=$RUNNER_TEMP/lm3d-compiler/node_modules/@lmctl-ai/lmctl/dist/dsl.js" >> "$GITHUB_ENV"
+      - name: Install the LMCode Java runtime
+        working-directory: lmcode-java
+        run: mvn -q -DskipTests install
       - name: Run JVM tests and build the TeaVM demo
-        run: mvn clean verify
+        run: mvn -f lm3d/pom.xml clean verify
       - name: Install browser test dependencies
         run: |
-          npm ci
-          npx playwright install --with-deps chromium
-      - name: Run WebGL browser integration tests
-        run: npm test
+          npm ci --prefix lm3d
+          npx --prefix lm3d playwright install --with-deps chromium
+      - name: Run WebGL, glTF, and LMCode browser integration tests
+        run: npm test --prefix lm3d

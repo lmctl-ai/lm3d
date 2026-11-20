@@ -64,7 +64,7 @@ async function pixels() {
 
 await page.goto(base);
 await page.waitForFunction(() => document.querySelector('#status')?.textContent.startsWith('Ready: Box'));
-assert.equal(await page.locator('#geometry option').count(), 6);
+assert.equal(await page.locator('#geometry option').count(), 10);
 assert.match(await page.locator('#render-stats').innerText(), /24 hero vertices · 454 triangles · 3 draw calls/);
 assert.deepEqual(await page.locator('script[src]').evaluateAll(scripts => scripts.map(script => script.getAttribute('src'))), ['teavm.js', 'boot.js']);
 
@@ -124,6 +124,32 @@ assert.ok(requests.some(url => url.endsWith('/models/torus-interleaved.gltf')));
 assert.ok(requests.some(url => url.endsWith('/models/torus.bin')));
 assert.equal((await pixels()).error, 0);
 
+await page.locator('#geometry').selectOption('lmcode-cube');
+await page.waitForFunction(() => document.querySelector('#status')?.textContent.startsWith('Ready: LMCode @cube'));
+assert.match(await page.locator('#render-stats').innerText(), /1 LMCode meshes · 24 vertices · 454 triangles · 3 draw calls/);
+const lmcodeCube = await frame();
+assert.notEqual(lmcodeCube, gltfTorus, 'LMCode @cube builds and renders through Java hosts');
+
+await page.locator('#geometry').selectOption('lmcode-hierarchy');
+await page.waitForFunction(() => document.querySelector('#status')?.textContent.startsWith('Ready: LMCode @hierarchy'));
+assert.match(await page.locator('#render-stats').innerText(), /3 LMCode meshes · 1010 vertices · 2198 triangles · 5 draw calls/);
+const lmcodeHierarchy = await frame();
+assert.notEqual(lmcodeHierarchy, lmcodeCube, 'LMCode @hierarchy composes three transformed meshes');
+await page.screenshot({ path: path.join(repository, 'target/lm3d-lmcode-hierarchy.png'), fullPage: true });
+
+await page.locator('#geometry').selectOption('lmcode-materials');
+await page.waitForFunction(() => document.querySelector('#status')?.textContent.startsWith('Ready: LMCode @materials'));
+assert.match(await page.locator('#render-stats').innerText(), /2 LMCode meshes · 2050 vertices · 4218 triangles · 4 draw calls/);
+const lmcodeMaterials = await frame();
+assert.notEqual(lmcodeMaterials, lmcodeHierarchy, 'LMCode material host functions alter the scene');
+assert.equal((await pixels()).error, 0);
+
+await page.locator('#geometry').selectOption('lmcode-failure');
+await page.waitForFunction(() => document.querySelector('#status')?.textContent.startsWith('LMCode @failure failed:'));
+assert.match(await page.locator('#status').innerText(), /previous scene is still visible/);
+assert.equal(await frame(), lmcodeMaterials, 'failure after lm3d_use does not replace the previous scene');
+assert.equal(await page.locator('#geometry').isDisabled(), false);
+
 await page.locator('#geometry').selectOption('box');
 await page.waitForFunction(() => document.querySelector('#status')?.textContent.startsWith('Ready: Box'));
 const canvas = page.locator('#scene-canvas');
@@ -166,14 +192,17 @@ callbackPage.on('pageerror', error => callbackErrors.push(error.message));
 await callbackPage.goto(base);
 await callbackPage.waitForFunction(() => document.querySelector('#status')?.textContent.startsWith('Ready: Box'));
 await callbackPage.locator('#scene-mesh-count').evaluate(element => element.remove());
+const callbackException = callbackPage.waitForEvent('pageerror');
 await callbackPage.locator('#geometry').selectOption('gltf-cube');
-await callbackPage.waitForTimeout(750);
+await callbackException;
 assert.equal(callbackErrors.length, 1, 'glTF success-callback exceptions propagate to the browser');
 assert.equal(await callbackPage.locator('#geometry').isDisabled(), false, 'callback failure does not leave the selector disabled');
 await callbackPage.close();
 
 assert.deepEqual(errors, []);
-assert.ok(requests.every(url => url.startsWith(new URL(base).origin)), 'demo loads no third-party runtime resources');
-console.log(JSON.stringify({ geometries: ['Box', 'Sphere', 'Torus'], gltf: ['embedded cube', 'external-buffer hierarchy', 'interleaved torus with default scene/material'], callbackExceptions: 'propagated', webgl, animation: 'frames, pause, Space verified', controls: 'pointer drag, wheel, reset verified', mobile: 'no horizontal overflow', scripts: ['teavm.js', 'boot.js'], errors }, null, 2));
+const allowedOrigins = new Set([new URL(base).origin, new URL(page.url()).origin]);
+const externalRequests = requests.filter(url => !allowedOrigins.has(new URL(url).origin));
+assert.deepEqual(externalRequests, [], 'demo loads no third-party runtime resources');
+console.log(JSON.stringify({ geometries: ['Box', 'Sphere', 'Torus'], gltf: ['embedded cube', 'external-buffer hierarchy', 'interleaved torus with default scene/material'], lmcode: ['@cube', '@hierarchy', '@materials', '@failure preserves previous scene'], callbackExceptions: 'propagated', webgl, animation: 'frames, pause, Space verified', controls: 'pointer drag, wheel, reset verified', mobile: 'no horizontal overflow', scripts: ['teavm.js', 'boot.js'], errors }, null, 2));
 await browser.close();
 server.close();

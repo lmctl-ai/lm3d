@@ -121,6 +121,10 @@ public final class Lm3dDemo {
 
     private static void changeGeometry() {
         String geometry = geometrySelect.getValue();
+        if (geometry.startsWith("lmcode-")) {
+            runLmcode(geometry);
+            return;
+        }
         if (geometry.startsWith("gltf-")) {
             loadGltf(geometry);
             return;
@@ -148,6 +152,34 @@ public final class Lm3dDemo {
         updateStats();
         status.setInnerText("Ready: " + label
                 + " geometry. The mesh was replaced through the Java scene graph.");
+    }
+
+    private static void runLmcode(String geometry) {
+        String annotation = geometry.substring("lmcode-".length());
+        loadGeneration++;
+        geometrySelect.setDisabled(true);
+        status.setInnerText("Running LMCode @" + annotation + " through Java host functions…");
+        Group[] stagedRoot = new Group[1];
+        com.lmctl.lm3d.lmcode.Lm3dHost host;
+        try {
+            host = LmcodeScenes.run(annotation, root -> stagedRoot[0] = root);
+        } catch (RuntimeException e) {
+            geometrySelect.setDisabled(false);
+            status.setInnerText("LMCode @" + annotation + " failed: " + e.getMessage()
+                    + ". The previous scene is still visible.");
+            return;
+        }
+        if (importedRoot != null) {
+            modelRoot.remove(importedRoot);
+        }
+        modelRoot.remove(hero);
+        importedRoot = stagedRoot[0];
+        modelRoot.add(stagedRoot[0]);
+        modelStats = host.meshCount() + " LMCode meshes · " + host.vertexCount() + " vertices";
+        geometrySelect.setDisabled(false);
+        renderer.render(scene, camera);
+        updateStats();
+        status.setInnerText("Ready: LMCode @" + annotation + ". Java host functions created the scene.");
     }
 
     private static void loadGltf(String geometry) {

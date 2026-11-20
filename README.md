@@ -17,17 +17,22 @@ lm3d is a focused subset with a familiar API, not a drop-in Three.js port. The d
 - Ambient lights, one directional light, and one point light with optional distance attenuation.
 - `PerspectiveCamera`, `OrthographicCamera`, and `OrbitControls`.
 - `GltfLoader` for glTF 2.x JSON assets with embedded base64 or external buffers, node hierarchies, TRS/matrix transforms, indexed or sequential triangle geometry, interleaved accessors, generated normals, and common material factors.
+- `Lm3dHost` typed LMCode functions for creating groups and meshes, parenting, transforms, and Phong material properties from annotated LMCode scene handlers.
 - WebGL 1 renderer with cached GPU buffers, inverse-transpose normal matrices, alpha blending, depth testing, and draw statistics.
 
 Current limits include no binary `.glb` container, textures, skins, glTF animation, shadows, post-processing, quaternion animation API, or transparent-object sorting. Sparse glTF accessors and non-triangle primitives are rejected. Meshes render double-sided. The first visible directional and point lights are used; all visible ambient lights are accumulated.
 
 ## Build
 
-Requirements: Java 21 and Maven. Node is needed only for browser integration tests.
+Requirements: Java 21, Maven, Node 24.15 or newer, `lmcode-java` commit `b88d3401ee10210a0a6583991d6a81427d5f112a` in the local Maven repository, and LMCode compiler `@lmctl-ai/lmctl` 0.2.482. The runtime commit and compiler version are pinned for reproducible bytecode and TeaVM compatibility. Node compiles LMCode during the Maven build and runs the browser tests.
 
 ```sh
 git clone https://github.com/lmctl-ai/lm3d.git
+git clone https://github.com/lmctl-ai/lmcode-java.git
+(cd lmcode-java && git checkout b88d3401ee10210a0a6583991d6a81427d5f112a && mvn -DskipTests install)
 cd lm3d
+npm install --prefix compiler @lmctl-ai/lmctl@0.2.482
+export LMCODE_COMPILER_MODULE="$PWD/compiler/node_modules/@lmctl-ai/lmctl/dist/dsl.js"
 mvn clean package
 ```
 
@@ -113,6 +118,51 @@ Regenerate all three from standard-library Python:
 python3 scripts/generate-gltf.py
 ```
 
+## LMCode scene handlers
+
+`Lm3dHost` exposes Java scene construction as typed LMCode host functions. LMCode sees only integer handles; Java owns the actual `Object3D` instances. The schema is `src/main/lmcode/scenes.schema.json`, and the three annotated handlers are in `src/main/lmcode/scenes.lms`.
+
+| Function | Returns | Purpose |
+| --- | --- | --- |
+| `lm3d_group()` | `int` | Create a group handle |
+| `lm3d_box(w, h, d, color)` | `int` | Create a Phong box mesh |
+| `lm3d_sphere(radius, widthSegments, heightSegments, color)` | `int` | Create a Phong sphere mesh |
+| `lm3d_torus(radius, tube, radialSegments, tubularSegments, color)` | `int` | Create a Phong torus mesh |
+| `lm3d_add(parent, child)` | `void` | Attach a child node |
+| `lm3d_position(node, x, y, z)` | `void` | Set node translation |
+| `lm3d_rotation(node, x, y, z)` | `void` | Set Euler rotation in radians |
+| `lm3d_scale(node, x, y, z)` | `void` | Set node scale |
+| `lm3d_shininess(node, value)` | `void` | Set Phong shininess |
+| `lm3d_specular(node, color)` | `void` | Set Phong specular color |
+| `lm3d_emissive(node, color)` | `void` | Set Phong emissive color |
+| `lm3d_use(group)` | `void` | Give the completed root to the Java application |
+
+For example, the demo's `LMCode: cube` option runs this annotated handler:
+
+```text
+@cube
+fn buildCube() -> void implements SceneHandler {
+  let root = lm3d_group();
+  let cube = lm3d_box(2.0, 2.0, 2.0, "#61d6c5");
+  lm3d_position(cube, 0.0, 1.25, 0.0);
+  lm3d_rotation(cube, 0.15, 0.4, 0.0);
+  lm3d_shininess(cube, 72.0);
+  lm3d_add(root, cube);
+  lm3d_use(root);
+}
+```
+
+Register the host with the exact schema, then load the compiled program and call the entry whose annotation matches `cube`, `hierarchy`, or `materials`:
+
+```java
+Registry registry = new Registry(false);
+Lm3dHost host = new Lm3dHost(registry, scene::add);
+Program program = Program.load(bytecode, schemaBytes, registry);
+program.call(entryIndex, new Context(), registry, List.of());
+```
+
+The Maven build compiles `scenes.lms` before Java compilation and embeds its bytecode and exact schema bytes in a generated Java class. The browser demo resolves the selected annotation and invokes the handler. `@hierarchy` composes three transformed meshes; `@materials` exercises shininess, specular, and emissive properties. `@failure` calls `lm3d_use` and then fails, demonstrating that the previous scene is replaced only after successful handler completion. The host rejects direct and indirect scene cycles.
+
 ## Tests
 
 ```sh
@@ -122,18 +172,19 @@ npx playwright install --with-deps chromium
 npm test
 ```
 
-The JVM suite covers vector/matrix math, cameras, scene inheritance, colors, geometry counts, normal generation, defensive copies, and invalid input. The Playwright suite starts a local static server and checks actual WebGL pixels, three procedural geometries, all three glTF examples and their external buffers, default scene/material behavior, propagation of success-callback exceptions, animation frames, pause/resume, keyboard input, orbit/zoom/reset, mobile overflow, runtime resources, and browser errors. Set `DEMO_URL` to run the same browser suite against a deployed demo or `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to select an existing Chromium binary.
+The 21 JVM tests cover vector/matrix math, cameras, scene inheritance, colors, geometry counts, normal generation, defensive copies, invalid input, all LMCode scene handlers, failure after use, and indirect-cycle rejection. The Playwright suite starts a local static server and checks actual WebGL pixels, three procedural geometries, all three glTF examples and their external buffers, default scene/material behavior, propagation of success-callback exceptions, all three successful LMCode scenes, failure-atomic replacement, animation frames, pause/resume, keyboard input, orbit/zoom/reset, mobile overflow, runtime resources, and browser errors. Set `DEMO_URL` to run the same browser suite against a deployed demo or `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to select an existing Chromium binary.
 
-GitHub Actions runs both suites on Ubuntu using public dependencies only.
+GitHub Actions builds the public LMCode runtime and compiler, then runs both suites on Ubuntu using public dependencies only.
 
 ## Source layout
 
-- `src/main/java/com/lmctl/lm3d/` — reusable library packages, including `loader/GltfLoader.java`.
-- `src/main/java/com/lmctl/lm3d/demo/` — browser application entry point.
+- `src/main/java/com/lmctl/lm3d/` — reusable library packages, including `loader/GltfLoader.java` and `lmcode/Lm3dHost.java`.
+- `src/main/java/com/lmctl/lm3d/demo/` — browser application entry point and LMCode annotation dispatch.
+- `src/main/lmcode/` — typed host schema and four annotated scene handlers, also copied into the static demo.
 - `src/main/webapp/` — static demo HTML, CSS, favicon, bootstrap, and glTF examples.
-- `scripts/generate-gltf.py` — deterministic generator for the original example assets.
+- `scripts/` — deterministic glTF generator and LMCode compiler bridge.
 - `src/test/java/` — JVM unit tests.
-- `tests/browser.mjs` — WebGL and glTF browser integration tests.
+- `tests/browser.mjs` — WebGL, glTF, and LMCode browser integration tests.
 
 ## License
 
