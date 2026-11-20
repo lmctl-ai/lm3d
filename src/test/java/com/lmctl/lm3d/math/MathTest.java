@@ -65,6 +65,12 @@ class MathTest {
         singular.elements()[15] = 0;
         assertThrows(IllegalStateException.class, singular::invert);
         assertThrows(IllegalArgumentException.class, () -> new PerspectiveCamera(60, 0, 0.1f, 100));
+        assertThrows(IllegalArgumentException.class, () -> new PerspectiveCamera(0, 1, 0.1f, 100));
+        assertThrows(IllegalArgumentException.class, () -> new PerspectiveCamera(180, 1, 0.1f, 100));
+        assertThrows(IllegalArgumentException.class, () -> new PerspectiveCamera(-10, 1, 0.1f, 100));
+        assertThrows(IllegalArgumentException.class, () -> new PerspectiveCamera(Float.NaN, 1, 0.1f, 100));
+        assertThrows(IllegalArgumentException.class, () -> new PerspectiveCamera(60, Float.NaN, 0.1f, 100));
+        assertThrows(IllegalArgumentException.class, () -> new PerspectiveCamera(60, 1, 0.1f, Float.POSITIVE_INFINITY));
         assertThrows(IllegalArgumentException.class, () -> new OrthographicCamera(0, 0, -1, 1, 0.1f, 20));
     }
 

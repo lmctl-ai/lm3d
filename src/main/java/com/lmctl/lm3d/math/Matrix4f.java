@@ -72,8 +72,9 @@ public final class Matrix4f {
     }
 
     public Matrix4f perspective(float fovYDegrees, float aspect, float near, float far) {
-        if (aspect == 0 || near <= 0 || far <= near) {
-            throw new IllegalArgumentException("Perspective requires nonzero aspect and 0 < near < far");
+        if (!(fovYDegrees > 0 && fovYDegrees < 180) || !Float.isFinite(aspect) || aspect <= 0
+                || !(near > 0) || !(far > near) || !Float.isFinite(far)) {
+            throw new IllegalArgumentException("Perspective requires 0 < FOV < 180, positive aspect, and finite 0 < near < far");
         }
         float f = 1 / (float) Math.tan(Math.toRadians(fovYDegrees) / 2);
         identity();

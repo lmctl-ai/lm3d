@@ -42,7 +42,11 @@ public final class WebGLRenderer {
             + " gl_Position = uProjection * uView * world;"
             + "}";
     private static final String FRAGMENT_SHADER =
-            "precision highp float;"
+            "#ifdef GL_FRAGMENT_PRECISION_HIGH\n"
+            + "precision highp float;\n"
+            + "#else\n"
+            + "precision mediump float;\n"
+            + "#endif\n"
             + "varying vec3 vNormal;"
             + "varying vec3 vWorldPosition;"
             + "uniform vec3 uColor;"
